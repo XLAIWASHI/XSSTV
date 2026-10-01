@@ -1,1376 +1,902 @@
-# XSSTV 项目设计方案
+# XSSTV 项目开发方案 V0.2
 
-**项目名称**：XSSTV
-**版本**：V1.0
-**项目类型**：跨平台 SSTV 编解码程序
-**核心语言**：C++17
-**GUI 框架**：Qt 6
-**目标平台**：Windows / Android
-**第一版 SSTV 模式**：Robot 36
+## 一、项目目标
 
----
+使用纯 C++ 实现一个跨平台 SSTV 编解码核心。
 
-# 一、项目目标
+第一版只实现 **Robot36**，后续如果有需要再增加其他 SSTV Mode。
 
-XSSTV 是一个使用 C++ 实现的 SSTV（Slow Scan Television，慢扫描电视）编解码程序。
-
-项目的核心目标是完整实现以下过程：
+最终目标：
 
 ```text
-图片
- ↓
-Robot 36 编码
- ↓
-SSTV 音频
- ↓
-WAV / 播放 / 无线电传输
- ↓
-SSTV 解码
- ↓
-图片
+图片 → SSTV 音频        编码
+SSTV 音频 → 图片        解码
+
+支持：
+├── WAV 文件
+├── 麦克风实时解码
+├── Windows / Linux
+└── Android
 ```
 
-最终程序支持：
-
-* Robot 36 编码
-* Robot 36 解码
-* WAV 文件读写
-* 图片读写
-* WAV 文件解码
-* 麦克风实时接收与解码
-* Windows 桌面运行
-* Android 运行
-* Android 图片保存到系统相册
-* 默认图片、音频、输出位置设置
-
-项目完成后，**不以继续增加 SSTV 模式或长期维护为目标**。
+Qt 只负责界面、文件选择、音频设备、图片显示等平台相关功能。
 
 ---
 
-# 二、项目原则
-
-## 2.1 核心算法与界面分离
-
-SSTV 编码、解码、DSP 等核心功能使用纯 C++ 实现。
-
-Core 不依赖 Qt。
-
-```text
-Qt / Android
-      ↓
-XSSTV Core
-```
-
-Qt 负责：
-
-* 用户界面
-* 文件选择
-* 图片显示
-* 音频播放
-* 麦克风输入
-* 应用设置
-* Android 系统功能
-
----
-
-## 2.2 第一版只实现 Robot 36
-
-第一版不实现：
-
-* PD120
-* Martin
-* Scottie
-* 其他 SSTV 模式
-* 多模式自动识别
-
-首先把 Robot 36 完整实现。
-
----
-
-## 2.3 先文件，后实时
-
-开发顺序：
-
-```text
-图片
- ↓
-Robot 36 编码
- ↓
-WAV
- ↓
-Robot 36 解码
- ↓
-图片
-```
-
-确认文件编解码正确以后，再实现：
-
-```text
-麦克风
- ↓
-实时音频
- ↓
-Robot 36 解码
- ↓
-实时图像
-```
-
----
-
-# 三、总体架构
+# 二、整体架构
 
 ```text
                          XSSTV
                            │
-             ┌─────────────┴─────────────┐
-             │                           │
-        Desktop Qt                  Android Qt
-             │                           │
-             └─────────────┬─────────────┘
+              ┌────────────┴────────────┐
+              ↓                         ↓
+            CLI                    Desktop / Android
+         命令行程序                    应用程序
+              │                         │
+              └────────────┬────────────┘
+                           ↓
+                         Core
                            │
-                     XSSTV Core
-                           │
-          ┌────────────────┼────────────────┐
-          │                │                │
-        Image            Audio             DSP
-          │                │                │
-          └────────────────┼────────────────┘
-                           │
-                          SSTV
-                           │
-                        Robot 36
-                       ┌────┴────┐
-                       │         │
-                    Encoder   Decoder
+             ┌─────────────┼─────────────┐
+             ↓             ↓             ↓
+           Image         Audio          SSTV
+                                         │
+                                      Robot36
 ```
 
-核心依赖方向：
+核心原则：
 
 ```text
-Application
-     ↓
-  Core
+Core
+    只负责核心数据处理和算法
+    不依赖 Qt
+    不负责用户界面
+    不负责程序入口
+
+CLI / Desktop / Android
+    负责与用户交互
+    调用 Core
+    不重复实现 SSTV 算法
 ```
 
-Core 不反向依赖 Application。
+可以把 Core 理解为“发动机”，CLI / Desktop / Android 是不同的“外壳”。
 
 ---
 
-# 四、Core 设计
-
-Core 是项目的核心部分，负责：
-
-* 图像数据
-* 音频数据
-* WAV
-* 颜色空间转换
-* DSP
-* SSTV 编码
-* SSTV 解码
-
-主要结构：
+# 三、Core 内部结构
 
 ```text
 core/
+├── include/xsstv/       ← 对外公开接口
+└── src/                 ← Core 内部实现
+```
+
+### `include/xsstv/`
+
+放外部程序真正需要使用的类型和函数。
+
+例如：
+
+```text
+Image.h
+AudioBuffer.h
+Wav.h
+Robot36.h
+```
+
+CLI / Qt / Android 可以：
+
+```cpp
+#include "xsstv/Robot36.h"
+```
+
+但不需要知道 Robot36 内部是怎么实现的。
+
+---
+
+### `src/`
+
+放具体实现：
+
+```text
+src/
 ├── image/
 ├── audio/
 ├── dsp/
 └── sstv/
+    └── robot36/
+```
+
+内部常量、辅助函数、实现细节尽量留在这里。
+
+---
+
+# 四、功能模块
+
+```text
+core/src/
+│
+├── image/
+│   ├── image_io.cpp
+│   ├── resize.cpp
+│   └── color.cpp
+│
+├── audio/
+│   ├── wav.cpp
+│   └── tone.cpp
+│
+├── dsp/
+│   ├── goertzel.cpp
+│   └── sync.cpp
+│
+└── sstv/
+    └── robot36/
+        ├── Robot36.cpp
+        └── Robot36Timing.h
+```
+
+模块职责：
+
+### image
+
+处理图片本身：
+
+```text
+读取
+保存
+缩放
+颜色转换
+```
+
+### audio
+
+处理音频数据：
+
+```text
+WAV
+正弦波
+AudioBuffer
+```
+
+### dsp
+
+主要服务于解码：
+
+```text
+频率检测
+同步检测
+信号分析
+```
+
+### sstv/robot36
+
+实现 Robot36 协议：
+
+```text
+VIS
+Timing
+扫描
+编码
+解码
+```
+
+依赖方向：
+
+```text
+Robot36
+   ↓
+image / audio / dsp
+
+image / audio / dsp
+   ↑
+不依赖 Robot36
+```
+
+即：
+
+> 通用模块不知道 SSTV 的存在，Robot36 使用通用模块。
+
+---
+
+# 五、Robot36 的类设计
+
+目前采用一个公开的 `Robot36` 类：
+
+```cpp
+class Robot36
+{
+public:
+    explicit Robot36(int sample_rate = 48000);
+
+    AudioBuffer encode(const Image& image);
+    Image decode(const AudioBuffer& audio);
+
+private:
+    // 内部实现
+};
+```
+
+它代表：
+
+> 一个 Robot36 编解码器。
+
+而不是：
+
+```text
+Robot36
+    ↓
+Robot36Encoder
+    ↓
+EncoderEncoder...
+```
+
+暂时不进行多层封装。
+
+如果以后 Encoder / Decoder 内部非常复杂，再进行拆分。
+
+---
+
+# 六、`.h` 和 `.cpp` 的规则
+
+不要机械地认为：
+
+```text
+每个 cpp 必须对应一个 h
+```
+
+真正的原则是：
+
+```text
+需要被其他文件使用的声明
+        ↓
+放到 .h
+
+具体实现
+        ↓
+放到 .cpp
+```
+
+例如公开接口：
+
+```text
+include/xsstv/Robot36.h
+        ↓
+class Robot36
+```
+
+实现：
+
+```text
+src/sstv/robot36/Robot36.cpp
+```
+
+而：
+
+```text
+Robot36Timing.h
+```
+
+如果只给 Robot36 内部使用，就留在 `src`。
+
+如果某个辅助函数完全是 `.cpp` 内部实现，也可以直接放在 `.cpp` 中，不需要额外 `.h`。
+
+---
+
+# 七、数据流
+
+## 编码
+
+```text
+Image
+  ↓
+resize
+  ↓
+RGB → Y / 色差信息
+  ↓
+Robot36
+  ↓
+AudioBuffer
+  ↓
+WAV
+```
+
+## 解码
+
+```text
+WAV / 麦克风
+  ↓
+AudioBuffer
+  ↓
+DSP
+  ↓
+Robot36 Decoder
+  ↓
+图像数据
+  ↓
+Image
+  ↓
+PNG
 ```
 
 ---
 
-# 五、Image 模块
+# 八、Image 的第一版设计
 
-Image 模块负责图片数据和颜色空间转换。
-
-## 5.1 RGB
-
-程序使用 RGB 作为通用图片格式：
+先使用简单的 RGB888：
 
 ```cpp
 struct Image
 {
     int width = 0;
     int height = 0;
-
     std::vector<uint8_t> rgb;
 };
 ```
 
-主要用于：
-
-* PNG/JPG 读取
-* PNG/JPG 保存
-* Qt 显示
-* 最终图片输出
-
----
-
-## 5.2 YCrCb
-
-Robot 36 内部使用亮度和色差信息，因此 SSTV 数据处理使用 YCrCb。
-
-```cpp
-struct YCrCbImage
-{
-    int width = 0;
-    int height = 0;
-
-    std::vector<uint8_t> y;
-    std::vector<uint8_t> cr;
-    std::vector<uint8_t> cb;
-};
-```
-
 其中：
 
 ```text
-Y  → 亮度
-Cr → 色差
-Cb → 色差
+rgb =
+
+R G B R G B R G B ...
 ```
 
----
-
-## 5.3 颜色转换
-
-编码：
-
-```text
-RGB
- ↓
-YCrCb
- ↓
-Robot 36
-```
-
-解码：
-
-```text
-Robot 36
- ↓
-YCrCb
- ↓
-RGB
- ↓
-PNG/JPG
-```
-
-YCrCb 本身可以表示完整图像，并不是因为它不能作为图像才转换为 RGB。
-
-转换为 RGB 的主要原因是：
-
-* 普通图片文件更适合使用 RGB/RGBA
-* Qt 显示方便
-* 普通图片查看器兼容性好
-* 最终输出更符合用户习惯
-
----
-
-## 5.4 Image 功能
-
-提供：
-
-```cpp
-Image load_image(...);
-
-void save_image(...);
-
-Image resize(
-    const Image& image,
-    int width,
-    int height
-);
-
-YCrCbImage rgb_to_ycrcb(
-    const Image& image
-);
-
-Image ycrcb_to_rgb(
-    const YCrCbImage& image
-);
-```
-
----
-
-# 六、Audio 模块
-
-音频使用统一的内存格式：
-
-```cpp
-struct AudioBuffer
-{
-    int sample_rate = 48000;
-
-    std::vector<float> mono;
-};
-```
-
-其中：
-
-```text
-单声道
-float
-范围约为 [-1, 1]
-```
-
-第一版主要支持：
-
-```text
-48000 Hz
-Mono
-PCM16 WAV
-```
-
----
-
-# 七、WAV 模块
-
-WAV 使用自实现的 PCM WAV 读写。
-
-```cpp
-AudioBuffer read_wav(...);
-
-void write_wav(
-    ...,
-    const AudioBuffer& audio
-);
-```
-
-第一版只要求：
-
-```text
-PCM
-16 bit
-Mono
-48000 Hz
-```
-
-不为其他音频格式增加复杂支持。
-
----
-
-# 八、音调生成
-
-编码器需要产生 SSTV 使用的正弦波。
-
-提供：
-
-```cpp
-void append_tone(
-    AudioBuffer& audio,
-    double frequency,
-    double duration
-);
-```
-
-以及：
-
-```cpp
-void append_silence(
-    AudioBuffer& audio,
-    double duration
-);
-```
-
-用于生成：
-
-* 引导信号
-* VIS
-* 同步信号
-* 图像数据
-
----
-
-# 九、DSP 模块
-
-DSP = Digital Signal Processing，即数字信号处理。
-
-DSP 在 XSSTV 中主要负责：
-
-```text
-音频
- ↓
-分析频率
- ↓
-检测同步
- ↓
-提供给 SSTV Decoder
-```
-
-主要包括：
-
-```text
-Goertzel
-频率检测
-同步检测
-必要的滤波/信号处理
-```
-
----
-
-# 十、Goertzel
-
-第一版使用 Goertzel 检测指定频率的能量。
-
-```cpp
-double goertzel_energy(
-    const float* samples,
-    size_t count,
-    double sample_rate,
-    double frequency
-);
-```
-
-用于判断当前音频窗口中某个频率的强度。
+每个像素 3 字节。
 
 例如：
 
 ```text
-输入一段音频
- ↓
-检测候选频率
- ↓
-找出能量最大的频率
- ↓
-得到当前 SSTV 数据
+320 × 240 × 3
+=
+230400 bytes
 ```
 
-Goertzel 只是 Decoder 使用的一个 DSP 工具，并不等于整个解码过程。
+暂时不加入：
+
+```text
+alpha
+stride
+多种像素格式
+复杂图像类层次
+```
+
+等真正需要时再扩展。
 
 ---
 
-# 十一、同步检测
+# 九、Robot36 协议参数
 
-Decoder 需要确定：
+`Robot36Timing.h` 保存 Robot36 的内部协议常量。
 
-```text
-SSTV 从哪里开始？
-一行从哪里开始？
-当前像素应该从哪里采样？
-```
-
-因此提供同步检测功能：
+例如：
 
 ```cpp
-struct SyncResult
-{
-    size_t position;
-    bool found;
-};
+constexpr double FREQ_SYNC = 1200.0;
+constexpr double FREQ_MIN  = 1500.0;
+constexpr double FREQ_MAX  = 2300.0;
+
+constexpr double TIME_SYNC        = 9.0;
+constexpr double TIME_SYNC_PORCH  = 3.0;
+constexpr double TIME_Y_SCAN      = 88.0;
 ```
 
-同步检测与频率检测共同完成音频时序定位。
+但是有一个原则：
+
+> **不要把网上看到的所有数字直接当成“已经确认的标准”。**
+
+特别是：
+
+```text
+VIS 时序
+色差排列
+行结构
+采样方式
+```
+
+正式实现之前逐项根据可靠资料确认。
 
 ---
 
-# 十二、Robot 36 模块
+# 十、不要过早固定内部图像结构
 
-Robot 36 是第一版唯一实现的 SSTV 模式。
-
-目录：
+目前只确定：
 
 ```text
-core/
-└── sstv/
-    └── robot36/
-        ├── Robot36Timing.h
-        ├── Robot36Encoder.cpp
-        ├── Robot36Decoder.cpp
-        └── Robot36Vis.cpp
+输入
+RGB Image
+```
+
+然后由 Robot36 编码过程中完成所需的颜色转换和采样。
+
+暂时不要把：
+
+```text
+Y  = 320×240
+Cr = 160×240
+Cb = 160×240
+```
+
+直接定义成整个 Core 的固定图像结构。
+
+这些属于 Robot36 Encoder 的实现细节。
+
+---
+
+# 十一、开发方式：从小功能开始
+
+不要直接写：
+
+```text
+Robot36Encoder.cpp
+```
+
+然后试图一次完成整个 SSTV。
+
+采用：
+
+```text
+一个功能
+    ↓
+实现
+    ↓
+编译
+    ↓
+测试
+    ↓
+理解
+    ↓
+下一功能
 ```
 
 ---
 
-# 十三、Robot 36 Encoder
+# 十二、开发阶段
 
-编码流程：
+## 第一阶段：Image IO
+
+目标：
 
 ```text
-输入图片
+PNG
  ↓
-缩放到 Robot 36 所需尺寸
+Image
  ↓
-RGB → YCrCb
+PNG
+```
+
+实现：
+
+```text
+Image.h
+image_io.cpp
+CLI 测试
+```
+
+验证：
+
+```text
+读取 test.png
  ↓
-生成引导信号
+打印 width / height
  ↓
-生成 VIS
+保存 copy.png
  ↓
-生成同步信号
+确认图片正确
+```
+
+---
+
+## 第二阶段：Resize
+
+实现：
+
+```text
+resize.cpp
+```
+
+目标：
+
+```text
+任意图片
  ↓
-生成亮度数据
+320×240
+```
+
+先验证缩放结果，再进入 SSTV。
+
+---
+
+## 第三阶段：颜色转换
+
+实现：
+
+```text
+color.cpp
+```
+
+理解并实现：
+
+```text
+RGB
  ↓
-生成色差数据
+Robot36 所需要的亮度 / 色差信息
+```
+
+这一阶段重点是理解颜色空间，而不是追求复杂优化。
+
+---
+
+## 第四阶段：Audio 基础
+
+实现：
+
+```text
+AudioBuffer
+tone.cpp
+wav.cpp
+```
+
+首先解决：
+
+```text
+生成 1900 Hz 正弦波
+ ↓
+保存 WAV
+ ↓
+播放器 / Audacity 检查
+```
+
+然后实现不同频率的音调。
+
+---
+
+## 第五阶段：Robot36 VIS
+
+这是第一次真正进入 SSTV 协议。
+
+目标：
+
+```text
+生成 Robot36 VIS
  ↓
 AudioBuffer
  ↓
 WAV
 ```
 
-编码器只负责按照 Robot 36 协议生成音频。
-
-具体协议参数以实际 Robot 36 协议资料为准，并通过外部软件进行交叉验证。
-
----
-
-# 十四、Robot 36 Decoder
-
-解码流程：
+验证：
 
 ```text
-WAV
- ↓
-AudioBuffer
- ↓
-寻找 SSTV 信号
- ↓
-检测同步
- ↓
-解析 VIS
- ↓
-确认 Robot 36
- ↓
-逐行解码
- ↓
-得到 YCrCb
- ↓
-YCrCb → RGB
- ↓
-Image
- ↓
-PNG/JPG
+Leader
+Break
+VIS
+Parity
+Stop
 ```
 
-Decoder 的关键不是单纯“检测频率”，而是同时解决：
+逐段检查频率和时间。
 
-* 信号起始位置
-* 同步位置
-* 行位置
-* 像素时间
-* 频率检测
-* 图像重建
+不要一开始就生成整张图片。
 
 ---
 
-# 十五、Robot 36 协议参数
+## 第六阶段：Robot36 单行
 
-Robot 36 的具体协议参数在实现阶段根据可靠协议资料确定。
-
-需要确认：
-
-* 图像尺寸
-* VIS
-* 同步频率
-* 同步时间
-* 图像数据频率范围
-* 行结构
-* 像素时间
-* Y 数据传输方式
-* Cr/Cb 传输方式
-
-设计文档中的参数不能在未经验证的情况下直接视为最终协议参数。
-
----
-
-# 十六、文件解码与实时解码
-
-两种输入最终使用同一套 Robot 36 解码逻辑。
-
-文件：
+实现：
 
 ```text
-WAV
+同步
  ↓
-AudioBuffer
+Y 扫描
  ↓
-Decoder
+分隔
  ↓
-Image
+色差信息
 ```
 
-实时：
+目标：
+
+> 先能够正确生成一行 Robot36 信号。
+
+这一阶段重点理解：
 
 ```text
-麦克风
- ↓
-连续音频
- ↓
-Decoder
- ↓
-Image
+图像数据
+      ↓
+数值
+      ↓
+频率
+      ↓
+随时间变化的音频
 ```
-
-不重复实现两套 Decoder。
 
 ---
 
-# 十七、RealTimeDecoder
-
-实时解码采用状态机。
+## 第七阶段：完整编码
 
 ```text
-SEARCH
+Image
+ ↓
+Resize
+ ↓
+颜色转换
  ↓
 VIS
  ↓
-SYNC
+240 行
  ↓
-DECODE_LINE
- ↓
-SYNC
- ↓
-DECODE_LINE
- ↓
-……
-```
-
-基本接口：
-
-```cpp
-class RealTimeDecoder
-{
-public:
-    void feed(
-        const float* samples,
-        size_t count
-    );
-
-    bool has_new_image() const;
-
-    Image take_image();
-};
-```
-
-实时系统在后期再加入：
-
-* 音频缓冲
-* 独立解码线程
-* UI 定时刷新
-
-第一阶段不提前实现复杂实时架构。
-
----
-
-# 十八、CLI
-
-CLI = Command Line Interface，即命令行界面。
-
-CLI 不作为主要用户界面，而是作为开发和测试工具。
-
-例如：
-
-```bash
-xsstv encode input.png output.wav
-```
-
-```bash
-xsstv decode input.wav output.png
-```
-
-作用：
-
-* 快速测试 Encoder
-* 快速测试 Decoder
-* 不依赖 Qt
-* 方便自动化测试
-
-CLI 与 Qt 使用同一个 Core。
-
----
-
-# 十九、Qt Desktop
-
-桌面程序使用：
-
-```text
-Qt 6 Widgets
-Qt Designer
-Qt Multimedia
-```
-
-主要功能：
-
-```text
-图片 → Robot 36 → WAV
-
-WAV → Robot 36 → 图片
-```
-
-以及：
-
-* 图片选择
-* WAV 选择
-* WAV 播放
-* 图片显示
-* 麦克风实时接收
-* 解码结果保存
-* 默认路径设置
-
-Qt 不实现 SSTV 算法。
-
----
-
-# 二十、Android
-
-Android 使用 Qt for Android。
-
-Android 与桌面共用：
-
-```text
-XSSTV Core
-```
-
-Android 只负责平台相关功能：
-
-* 用户界面
-* 文件选择
-* 麦克风
-* 音频
-* 图片显示
-* 设置
-* 系统相册
-
----
-
-# 二十一、Android 保存到相册
-
-这是正式功能。
-
-流程：
-
-```text
-SSTV Decoder
- ↓
-RGB Image
- ↓
-Android 图片保存接口
- ↓
-系统照片 / 图库
-```
-
-用户解码完成后，可以直接在手机系统相册中看到结果。
-
-该功能属于 Android Application 层，不放入 Core。
-
----
-
-# 二十二、默认路径
-
-应用支持修改默认位置。
-
-主要包括：
-
-```text
-默认图片目录
-默认音频目录
-默认输出目录
-```
-
-例如桌面：
-
-```text
-打开图片
- ↓
-默认进入用户设置的图片目录
-```
-
-保存 WAV：
-
-```text
-保存 WAV
- ↓
-默认进入用户设置的音频目录
-```
-
-保存图片：
-
-```text
-保存图片
- ↓
-默认进入用户设置的输出目录
-```
-
-Android 使用 Android 自身的文件访问机制，不强行使用 Windows 式路径。
-
----
-
-# 二十三、设置模块
-
-设置属于 Application 层。
-
-```text
-Settings
-├── 默认图片位置
-├── 默认音频位置
-└── 默认输出位置
-```
-
-Core 不保存用户路径，也不依赖平台文件系统。
-
----
-
-# 二十四、项目目录
-
-```text
-XSSTV/
-│
-├── CMakeLists.txt
-├── README.md
-├── .gitignore
-│
-├── core/
-│   ├── CMakeLists.txt
-│   │
-│   ├── include/
-│   │   └── xsstv/
-│   │       ├── Image.h
-│   │       ├── AudioBuffer.h
-│   │       ├── Color.h
-│   │       ├── Wav.h
-│   │       └── Robot36.h
-│   │
-│   └── src/
-│       ├── image/
-│       │   ├── image_io.cpp
-│       │   └── color.cpp
-│       │
-│       ├── audio/
-│       │   ├── wav.cpp
-│       │   └── tone.cpp
-│       │
-│       ├── dsp/
-│       │   ├── goertzel.cpp
-│       │   ├── frequency.cpp
-│       │   └── sync.cpp
-│       │
-│       └── sstv/
-│           └── robot36/
-│               ├── Robot36Timing.h
-│               ├── Robot36Encoder.cpp
-│               ├── Robot36Decoder.cpp
-│               └── Robot36Vis.cpp
-│
-├── cli/
-│   ├── CMakeLists.txt
-│   └── main.cpp
-│
-├── tests/
-│   ├── CMakeLists.txt
-│   ├── test_wav.cpp
-│   ├── test_color.cpp
-│   ├── test_goertzel.cpp
-│   └── test_robot36.cpp
-│
-├── desktop/
-│   ├── CMakeLists.txt
-│   ├── main.cpp
-│   ├── MainWindow.h
-│   ├── MainWindow.cpp
-│   └── MainWindow.ui
-│
-├── android/
-│   └── ...
-│
-├── third_party/
-│   └── stb/
-│
-└── assets/
-    └── test.png
-```
-
----
-
-# 二十五、依赖关系
-
-保持单向依赖：
-
-```text
-Desktop Qt ──┐
-             ├──→ XSSTV Core
-Android Qt ──┤
-             │
-CLI ─────────┘
-```
-
-Core 不依赖：
-
-```text
-Qt
-Android
-Windows API
-GUI
-```
-
----
-
-# 二十六、测试计划
-
-## 26.1 WAV 测试
-
-```text
 AudioBuffer
  ↓
 WAV
- ↓
-AudioBuffer
 ```
 
-确认数据能够正确读写。
-
----
-
-## 26.2 DSP 测试
-
-使用已知频率的测试信号：
+最终实现：
 
 ```text
-1500 Hz
-1900 Hz
-2300 Hz
+图片 → Robot36 WAV
 ```
-
-验证频率检测。
 
 ---
 
-## 26.3 颜色转换测试
+## 第八阶段：编码闭环
+
+使用自己的编码器：
 
 ```text
-RGB
+test.png
  ↓
-YCrCb
+Robot36 Encoder
  ↓
-RGB
+output.wav
+ ↓
+Robot36 Decoder
+ ↓
+decoded.png
 ```
 
-检查转换误差。
+目标：
+
+> 自己编码的音频能够被自己的 Decoder 正确恢复。
 
 ---
 
-## 26.4 闭环测试
+## 第九阶段：解码真实 SSTV
 
-最重要的测试：
-
-```text
-原始图片
- ↓
-Robot 36 Encoder
- ↓
-WAV
- ↓
-Robot 36 Decoder
- ↓
-恢复图片
-```
-
-比较：
-
-* 图像尺寸
-* 颜色
-* 亮度
-* 整体图像内容
-
-可以使用 PSNR / SSIM 等指标辅助判断。
-
----
-
-## 26.5 外部兼容测试
-
-使用其他 SSTV 软件进行：
-
-```text
-其他软件
- ↓
-Robot 36 WAV
- ↓
-XSSTV Decoder
-```
-
-以及：
-
-```text
-XSSTV Encoder
- ↓
-Robot 36 WAV
- ↓
-其他 SSTV 软件
-```
-
-确保 XSSTV 不只是“自己编码、自己解码”。
-
----
-
-## 26.6 真实信号测试
-
-使用真实 SSTV 录音：
-
-```text
-真实 SSTV 信号
- ↓
-WAV
- ↓
-XSSTV Decoder
- ↓
-图片
-```
-
-用于验证实际信号环境下的解码能力。
-
----
-
-## 26.7 实时测试
-
-```text
-SSTV 音频
- ↓
-扬声器 / 音频设备
- ↓
-麦克风
- ↓
-XSSTV
- ↓
-实时图像
-```
-
-确认实时接收链路正常。
-
----
-
-# 二十七、开发阶段
-
-## Phase 0：项目骨架
-
-建立：
-
-* Git
-* CMake
-* Core
-* CLI
-* Tests
-* Desktop
-
----
-
-## Phase 1：WAV
-
-完成：
-
-```text
-read_wav
-write_wav
-```
-
----
-
-## Phase 2：音频生成
-
-完成：
-
-```text
-正弦波
-静音
-AudioBuffer
-```
-
----
-
-## Phase 3：DSP
-
-完成：
+加入：
 
 ```text
 Goertzel
-频率检测
 同步检测
+频率检测
+VIS 识别
 ```
+
+然后测试真实 Robot36 音频。
 
 ---
 
-## Phase 4：图像
+## 第十阶段：CLI 完善
 
-完成：
+最终 CLI 可以提供：
 
 ```text
-PNG/JPG
-RGB
-YCrCb
-resize
-颜色转换
+xsstv encode input.png output.wav
+xsstv decode input.wav output.png
 ```
+
+CLI 只负责：
+
+```text
+参数
+文件
+错误信息
+调用 Core
+```
+
+不负责 SSTV 算法。
 
 ---
 
-## Phase 5：Robot 36 Encoder
+## 第十一阶段：Qt Desktop
 
-完成：
-
-```text
-Image → Robot 36 → AudioBuffer
-```
-
-然后：
-
-```text
-AudioBuffer → WAV
-```
-
----
-
-## Phase 6：Robot 36 Decoder
-
-完成：
-
-```text
-WAV → AudioBuffer → Robot 36 → Image
-```
-
----
-
-## Phase 7：闭环
-
-完成：
-
-```text
-Image
- ↓
-Encoder
- ↓
-WAV
- ↓
-Decoder
- ↓
-Image
-```
-
-这一阶段是整个项目的第一个关键里程碑。
-
----
-
-## Phase 8：外部兼容
-
-测试：
-
-```text
-XSSTV ↔ 其他 SSTV 软件
-```
-
----
-
-## Phase 9：CLI
-
-完善：
-
-```text
-encode
-decode
-```
-
-用于方便测试。
-
----
-
-## Phase 10：Qt Desktop
-
-实现：
-
-* 图片编码
-* WAV 解码
-* WAV 播放
-* 图片显示
-* 文件保存
-
----
-
-## Phase 11：实时解码
-
-实现：
-
-```text
-麦克风
- ↓
-实时 Decoder
- ↓
-实时图像
-```
-
----
-
-## Phase 12：Android
-
-完成：
-
-* Android GUI
-* 文件选择
-* 音频输入
-* 编解码
-* 图片显示
-
----
-
-## Phase 13：系统功能
-
-完成：
-
-* 保存图片到 Android 相册
-* 默认路径
-* 输出路径
-* 应用设置
-
----
-
-# 二十八、第一版明确不做
-
-为了控制项目范围，以下内容不属于 V1.0：
-
-```text
-PD120
-Martin
-Scottie
-多模式自动识别
-复杂图像编辑
-SDR
-无线电 CAT 控制
-网络 SSTV
-高级抗噪
-高级均衡
-插件系统
-云服务
-复杂 SDK
-```
-
-如果未来产生需求，再作为独立版本考虑。
-
----
-
-# 二十九、项目完成标准
-
-XSSTV V1.0 满足以下条件即可认为完成：
-
-### 核心
-
-```text
-Robot 36 编码正常
-Robot 36 解码正常
-WAV 正常读写
-图片正常读写
-```
-
-### 闭环
-
-```text
-图片
- ↓
-Robot 36
- ↓
-WAV
- ↓
-Robot 36
- ↓
-图片
-```
-
-能够正常完成。
-
-### 外部兼容
-
-能够与其他 Robot 36 SSTV 软件进行基本交叉验证。
-
-### 实时
-
-```text
-麦克风
- ↓
-Robot 36
- ↓
-实时图像
-```
-
-能够正常工作。
-
-### Windows
-
-能够正常使用 Qt 桌面程序。
-
-### Android
-
-能够正常：
+Qt 负责：
 
 ```text
 选择图片
-编码
-解码
-实时接收
-保存图片
+选择 WAV
+播放音频
+显示图片
+文件保存
 ```
 
-并能够将解码图片保存到系统相册。
-
-### 设置
-
-能够修改默认图片、音频和输出位置。
-
-满足以上条件后：
-
-> **XSSTV V1.0 即视为项目完成。**
-
-不再为了未来可能出现的需求继续扩大项目范围。
+核心算法继续使用 Core。
 
 ---
 
-# 三十、核心技术路线总结
+## 第十二阶段：实时麦克风
 
-XSSTV 的核心技术路线只有一条：
+加入平台音频输入：
 
 ```text
-                 ┌─────────────┐
-                 │  RGB Image  │
-                 └──────┬──────┘
-                        │
-                   RGB → YCrCb
-                        │
-                        ▼
-                 ┌─────────────┐
-                 │ Robot 36    │
-                 │   Encoder  │
-                 └──────┬──────┘
-                        │
-                        ▼
-                    AudioBuffer
-                        │
-                        ▼
-                       WAV
-                        │
-              文件 / 播放 / 无线电
-                        │
-                        ▼
-                    AudioBuffer
-                        │
-                        ▼
-                 ┌─────────────┐
-                 │ Robot 36    │
-                 │   Decoder  │
-                 └──────┬──────┘
-                        │
-                        ▼
-                      YCrCb
-                        │
-                   YCrCb → RGB
-                        │
-                        ▼
-                 ┌─────────────┐
-                 │  RGB Image  │
-                 └──────┬──────┘
-                        │
-              ┌─────────┴─────────┐
-              │                   │
-             PNG/JPG            Qt显示
-              │
-              ▼
-         Android 相册
+麦克风
+ ↓
+AudioBuffer
+ ↓
+DSP
+ ↓
+Robot36 Decoder
+ ↓
+Image
 ```
 
-最终开发原则：
+---
 
-> **先让协议跑通，再让程序好用；先完成核心闭环，再做实时和跨平台；不为尚未存在的需求提前增加复杂度。**
+## 第十三阶段：Android
+
+Android 只提供新的外壳和平台能力：
+
+```text
+Android UI
+ ↓
+Core
+ ↓
+Robot36
+```
+
+Core 不需要重新实现。
+
+---
+
+# 十三、当前真正要做的事情
+
+现在不要继续设计整个 XSSTV。
+
+当前任务只有：
+
+```text
+core/include/xsstv/Image.h
+        ↓
+core/src/image/image_io.cpp
+        ↓
+stb_image
+        ↓
+CLI
+        ↓
+PNG → Image → PNG
+```
+
+成功之后再进入 Resize。
+
+---
+
+# 十四、最终原则
+
+### 原则 1：先理解，再实现
+
+特别是 Robot36：
+
+```text
+原理
+ ↓
+协议
+ ↓
+数据结构
+ ↓
+算法
+ ↓
+代码
+```
+
+---
+
+### 原则 2：每一步都能验证
+
+不要：
+
+```text
+写 1000 行
+ ↓
+最后发现不知道哪里错
+```
+
+而是：
+
+```text
+写一点
+ ↓
+测试
+ ↓
+确认
+ ↓
+继续
+```
+
+---
+
+### 原则 3：不要为了未来过度设计
+
+现在只做 Robot36。
+
+以后如果真的需要：
+
+```text
+Martin
+Scottie
+其他 Mode
+```
+
+再在：
+
+```text
+src/sstv/
+```
+
+下面增加对应实现。
+
+---
+
+### 原则 4：Core 与应用分离
+
+```text
+Core：
+“怎么做 SSTV？”
+
+CLI / Qt / Android：
+“用户要做什么？”
+```
+
+两者不要混在一起。
+
+---
+
+# 十五、最终项目关系
+
+```text
+                         XSSTV
+                           │
+              ┌────────────┴────────────┐
+              │                         │
+             CLI                    Desktop / Android
+              │                         │
+              └────────────┬────────────┘
+                           ↓
+                         Core
+                           │
+       ┌───────────────────┼───────────────────┐
+       ↓                   ↓                   ↓
+     Image               Audio               SSTV
+       │                   │                   │
+   IO/Resize/Color    WAV/Tone             Robot36
+                                           │
+                                      Encode/Decode
+```
+
+核心目标不是一次把整个系统写完，而是：
+
+```text
+Image IO
+   ↓
+Resize
+   ↓
+Color
+   ↓
+Audio
+   ↓
+Tone
+   ↓
+VIS
+   ↓
+单行
+   ↓
+完整 Robot36
+   ↓
+Decoder
+   ↓
+CLI
+   ↓
+Qt
+   ↓
+Android
+```
+
+**每完成一层，就得到一个可以运行、可以验证、可以理解的结果。**
