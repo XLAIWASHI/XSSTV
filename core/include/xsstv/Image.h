@@ -18,5 +18,5 @@ struct Image
 // 读写图片
 bool load_image(const std::string& path, Image& out);
 bool save_image(const std::string& path, const Image& img);
-
+Image resize_image(const Image& img, int dst_w, int dst_h);
 }

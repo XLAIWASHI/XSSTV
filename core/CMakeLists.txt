@@ -1,5 +1,9 @@
 add_library(xsstv_core STATIC
     src/image/image_io.cpp
+    src/image/image_resize.cpp
+    src/image/color.cpp
+    src/audio/tone.cpp
+    src/audio/wav.cpp
 )
 
 target_include_directories(xsstv_core PUBLIC
