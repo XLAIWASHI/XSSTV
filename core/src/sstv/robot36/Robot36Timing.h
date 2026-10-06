@@ -6,6 +6,17 @@ namespace sstv
 {
 namespace robot36
 {
+    // VIS 频率
+    constexpr double FREQ_VIS_1 = 1100.0;
+    constexpr double FREQ_VIS_0 = 1300.0;
+
+    // VIS 时间
+    constexpr double TIME_LEADER    = 300.0;
+    constexpr double TIME_BREAK     = 10.0;
+    constexpr double TIME_VIS_START = 30.0;
+    constexpr double TIME_VIS_BIT   = 30.0;
+    constexpr double TIME_VIS_STOP  = 30.0;
+
     // 频率定义（Hz）
     constexpr double FREQ_SYNC   = 1200.0; // 同步脉冲
     constexpr double FREQ_MIN    = 1500.0; // 黑色电平
@@ -25,10 +36,10 @@ namespace robot36
                                + TIME_SEPARATOR + TIME_CHROMA_PORCH + TIME_CHROMA_SCAN;
 
     // 图像与协议
-    constexpr int WIDTH     = 320; // 图像宽度（Y每行像素数）
-    constexpr int HEIGHT    = 240; // 图像高度（总行数）
+    constexpr int WIDTH         = 320; // 图像宽度（Y每行像素数）
+    constexpr int HEIGHT        = 240; // 图像高度（总行数）
     constexpr double PIXEL_TIME = 0.275; // 每个像素的时间
-    constexpr int VIS_CODE  = 8; // Robot36 的 VIS 代码
+    constexpr int VIS_CODE      = 8; // Robot36 的 VIS 代码
 
 } // namespace robot36
 } // namespace sstv
