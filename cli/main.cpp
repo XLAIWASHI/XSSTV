@@ -1,33 +1,56 @@
 #include <iostream>
-#include "xsstv/AudioBuffer.h"
+#include <string>
+#include <filesystem>
 
-// 临时声明（因为 tone.h 和 wav.h 在 src 里）
-namespace xsstv {
-    void append_tone(AudioBuffer& audio, double freq, double duration_ms);
-    bool write_wav(const std::string& path, const AudioBuffer& audio);
-}
+#include "paths.h"
+#include "xsstv/Image.h"
+#include "xsstv/Robot36.h"
+#include "xsstv/Wav.h"
 
-int main() {
-    std::cout << "XSSTV CLI\n";
+int main(int argc, char** argv)
+{
+    namespace fs = std::filesystem;
 
-    xsstv::AudioBuffer audio;
-    audio.sample_rate = 48000;
+    // --debug 时把中间图落到 temp/ 便于观察
+    const bool debug = (argc > 1 && std::string(argv[1]) == "--debug");
 
-    // 生成 1 秒 1500 Hz 正弦波
-    xsstv::append_tone(audio, 1500.0, 1000.0);
-    xsstv::append_tone(audio, 1200.0, 1000.0);
-    xsstv::append_tone(audio, 2000.0, 1000.0);
-    xsstv::append_tone(audio, 440.0, 1000.0);
-    xsstv::append_tone(audio, 20, 1000.0);
+    // 每次启动清空 temp，并保证 output 存在
+    fs::remove_all(paths::temp());
+    fs::create_directories(paths::temp());
+    fs::create_directories(paths::output());
 
-    std::cout << "采样点数：" << audio.mono.size() << "\n";
-    std::cout << "时长：" << audio.mono.size() / double(audio.sample_rate) << " 秒\n";
+    // 输入素材
+    const std::string in = (paths::assets() / "test.png").string();
 
-    if (xsstv::write_wav("test_tone.wav", audio)) {
-        std::cout << "已生成 test_tone.wav\n";
-    } else {
-        std::cout << "写入失败\n";
+    xsstv::Image img;
+    if (!xsstv::load_image(in, img))
+    {
+        std::cerr << "读图失败: " << in << "\n";
+        return 1;
     }
+    std::cout << "读到图片 " << img.width << "x" << img.height << "\n";
+
+    if (debug)
+    {
+        const xsstv::Image preview = xsstv::fit_image(img, 320, 240);
+        xsstv::save_image((paths::temp() / "resized.png").string(), preview);
+    }
+
+    // 编码：Image -> Robot36 音频
+    xsstv::Robot36 enc(48000);
+    const xsstv::AudioBuffer audio = enc.encode(img);
+
+    // 输出 WAV
+    const std::string wav_out = (paths::output() / "robot36.wav").string();
+    if (!xsstv::write_wav(wav_out, audio))
+    {
+        std::cerr << "写 WAV 失败: " << wav_out << "\n";
+        return 1;
+    }
+
+    std::cout << "已生成 " << wav_out << "\n";
+    std::cout << "时长 " << audio.mono.size() / 48000.0
+              << " 秒, 采样点 " << audio.mono.size() << "\n";
 
     return 0;
 }

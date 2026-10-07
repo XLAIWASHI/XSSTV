@@ -1,0 +1,10 @@
+# 默认所有文本文件在仓库里都用 LF
+* text=auto eol=lf
+
+# 明确二进制文件，别动
+*.png binary
+*.jpg binary
+*.wav binary
+*.ico binary
+*.exe binary
+*.dll binary

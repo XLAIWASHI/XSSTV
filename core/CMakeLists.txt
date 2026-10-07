@@ -4,6 +4,7 @@ add_library(xsstv_core STATIC
     src/image/color.cpp
     src/audio/tone.cpp
     src/audio/wav.cpp
+    src/sstv/robot36/Robot36.cpp
 )
 
 target_include_directories(xsstv_core PUBLIC

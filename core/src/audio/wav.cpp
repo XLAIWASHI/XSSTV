@@ -1,4 +1,4 @@
-#include "wav.h"
+#include "xsstv/Wav.h"
 #include <fstream>
 #include <cstdint>
 #include <vector>
