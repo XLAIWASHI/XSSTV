@@ -17,6 +17,9 @@ bool load_image(const std::string& path, Image& out)
 
     out.width = w;
     out.height = h;
+    // 1. 清空 out.rgb 原有的内容
+    // 2. 把 data 到 data + w*h*3 之间的所有字节，复制进 out.rgb
+    // 3. out.rgb 的大小变成 w * h * 3
     out.rgb.assign(data, data + w * h * 3);
     stbi_image_free(data);
     return true;
