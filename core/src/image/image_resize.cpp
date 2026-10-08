@@ -29,7 +29,7 @@ Image fit_image(const Image& img, int dst_w, int dst_h)
     out.height = dst_h;
     out.rgb.assign(size_t(dst_w) * dst_h * 3, 0); // 先铺黑底
 
-    if (img.width <= 0 || img.height <= 0 || img.rgb.empty())
+     if (img.width <= 0 || img.height <= 0 || img.rgb.empty())
         return out;
 
     const double src_aspect = double(img.width) / double(img.height);

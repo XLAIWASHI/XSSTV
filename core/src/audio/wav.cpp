@@ -12,7 +12,7 @@ static void write_u32(std::ofstream& f, uint32_t v)
     f.put(char(v & 0xFF));
     f.put(char((v >> 8) & 0xFF));
     f.put(char((v >> 16) & 0xFF));
-    f.put(char((v >> 24) & 0xFF));
+    f.put(char((v >> 32) & 0xFF));
 }
 
 // 把一个16位整数，拆成2个字节，按“小端顺序”写入文件
