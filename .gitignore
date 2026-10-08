@@ -94,6 +94,8 @@ Desktop.ini
 *.mp3
 *.m4a
 *.flac
+temp/
+output/
 
 # Generated images
 *.png
