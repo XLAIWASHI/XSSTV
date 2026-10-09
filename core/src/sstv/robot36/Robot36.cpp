@@ -42,6 +42,8 @@ void Robot36::encode_vis()
     append_tone_(FREQ_SYNC, TIME_VIS_START);
 
     // 7 个数据位，LSB 优先
+    // LSB 优先：先发最低位
+    // Robot36 的 VIS 码是 8，二进制是 0001000（7位）。所以先发三个 0，再发一个 1，再发三个 0
     const int vis = VIS_CODE;
     int ones = 0;
     for (int i = 0; i < 7; ++i)
@@ -72,10 +74,12 @@ void Robot36::encode_line(const YCrCbImage& ycc, int line)
 {
     // 同步脉冲 1200Hz 9ms
     append_tone_(FREQ_SYNC, TIME_SYNC);
-    // 同步后的 porch 1500Hz 3ms
+    // 同步后的 porch 1500Hz 3ms 同步脉冲和图像数据之间的“缓冲”
     append_tone_(FREQ_MIN, TIME_SYNC_PORCH);
 
     // 每像素占用的采样点数（0.275ms），用浮点位置累加避免逐像素取整造成的时间漂移
+    // 采样点本身必须是整数。 你不可能在 WAV 文件里存“半个采样点”
+    // 但是，“每个像素占用多少个采样点”这个分配比例，是小数
     const double step = PIXEL_TIME * sample_rate_ / 1000.0;
 
     // Y 扫描：320 像素 / 88ms
@@ -83,8 +87,8 @@ void Robot36::encode_line(const YCrCbImage& ycc, int line)
     double pos = 0.0;
     for (int x = 0; x < WIDTH; ++x)
     {
-        const double f = FREQ_MIN + (y_row[x] / 255.0) * (FREQ_MAX - FREQ_MIN);
-        const double inc = TWO_PI * f / sample_rate_;
+        const double f = FREQ_MIN + (y_row[x] / 255.0) * (FREQ_MAX - FREQ_MIN); // Y 映射频率
+        const double inc = TWO_PI * f / sample_rate_; // 每个采样点的间距
         const int start = int(std::lround(pos));
         pos += step;
         const int end = int(std::lround(pos));
@@ -120,6 +124,7 @@ void Robot36::encode_line(const YCrCbImage& ycc, int line)
             phase_ += inc;
         }
     }
+
 }
 
 AudioBuffer Robot36::encode(const Image& img)
@@ -138,8 +143,9 @@ AudioBuffer Robot36::encode(const Image& img)
 
     // 240 行图像数据
     for (int line = 0; line < HEIGHT; ++line)
+    {
         encode_line(ycc, line);
-
+    }
     return audio_;
 }
 
