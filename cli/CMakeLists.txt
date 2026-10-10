@@ -1,7 +1,7 @@
-add_executable(xsstv_cli main.cpp)
+add_executable(xsstv main.cpp)
 
-target_link_libraries(xsstv_cli PRIVATE xsstv_core)
+target_link_libraries(xsstv PRIVATE xsstv_core)
 
-target_compile_definitions(xsstv_cli PRIVATE
+target_compile_definitions(xsstv PRIVATE
     XSSTV_ROOT="${CMAKE_SOURCE_DIR}"
 )
