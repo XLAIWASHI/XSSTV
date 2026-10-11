@@ -2,6 +2,8 @@
 #include <string>
 #include <vector>
 #include <filesystem>
+#include <cstdio>
+#include <cctype>
 #include "paths.h"
 #include "xsstv/Image.h"
 #include "xsstv/Robot36.h"
@@ -9,11 +11,12 @@
 
 void printHelp();
 int robot36Encode(std::string in, std::string out, bool debug);
+std::string next_output_path(const std::string& prefix, const std::string& ext);
+
+namespace fs = std::filesystem;
 
 int main(int argc, char** argv)
 {
-    namespace fs = std::filesystem;
-
     // 每次启动清空 temp, 并保证 output 存在
     fs::remove_all(paths::temp());
     fs::create_directories(paths::temp());
@@ -54,6 +57,8 @@ int main(int argc, char** argv)
         printHelp();
         return 0;
     }
+
+    next_output_path("robot36_", ".wav");
 
     // 解析参数
     std::string cmd, input, output;
@@ -174,4 +179,40 @@ int robot36Encode(std::string in, std::string out, bool debug)
         return 1;
     }
     return 0;
+}
+
+// 给定文件名开头和结尾，计算出下一个编号的文件全路径
+// prefix 文件名前缀，模式类型 + ‘_’ ext 文件扩展名
+std::string next_output_path(const std::string &prefix, const std::string &ext)
+{
+    int max_n = 0;
+    for (auto& e : fs::directory_iterator(paths::output()))
+    {
+        std::string name = e.path().filename().string();
+        
+        // 太短：连 prefix 和 ext 都装不下，不可能有数字
+        if (name.size() <= prefix.size() + ext.size()) continue;
+
+        // 开头必须是 prefix
+        if (name.compare(0, prefix.size(), prefix) != 0) continue;
+
+        // 结尾必须是 ext
+        if (name.compare(name.size() - ext.size(), ext.size(), ext) != 0) continue;
+
+        std::string digits = name.substr(prefix.size(), name.size() - prefix.size() - ext.size());
+        bool all_digits = !digits.empty();
+        for (char c : digits)
+        {
+            if (!std::isdigit((unsigned char)c)) { all_digits = false; break; }
+        }
+        if (!all_digits) continue;
+        int n = std::stoi(digits);
+        if (n > max_n) max_n = n;
+    }
+    int next = max_n + 1;
+    char buf[64];
+    std::snprintf(buf, sizeof(buf), "%s%04%s", prefix.c_str(), next, ext.c_str());
+
+
+    return (paths::output() / std::string(buf)).string();
 }
