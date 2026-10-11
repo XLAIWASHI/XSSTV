@@ -211,6 +211,7 @@ std::string next_output_path(const std::string &prefix, const std::string &ext)
     }
     int next = max_n + 1;
     char buf[64];
+    // snprintf(容器， 大小， 格式， ···) 把格式化结果写进 buf
     std::snprintf(buf, sizeof(buf), "%s%04%s", prefix.c_str(), next, ext.c_str());
 
 
