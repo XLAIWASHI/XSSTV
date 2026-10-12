@@ -10,7 +10,7 @@
 #include "xsstv/Wav.h"
 
 void printHelp();
-int robot36Encode(std::string in, std::string out, bool debug);
+int robot36Encode(const std::string& in, const std::string& out, bool debug);
 std::string next_output_path(const std::string& prefix, const std::string& ext);
 
 namespace fs = std::filesystem;
@@ -58,8 +58,6 @@ int main(int argc, char** argv)
         return 0;
     }
 
-    next_output_path("robot36_", ".wav");
-
     // 解析参数
     std::string cmd, input, output;
     if (!pos.empty())
@@ -92,7 +90,7 @@ int main(int argc, char** argv)
     std::string out_path;
     if (output.empty())
     {
-        out_path = (paths::output() / "robot36.wav").string();
+        out_path = next_output_path(mode + "_", ".wav");
         std::cout << "提示：未指定输出，使用默认输出 " << out_path << std::endl;
     }
     else
@@ -109,14 +107,22 @@ int main(int argc, char** argv)
                 return 1;
             std::cout << "编码成功，当前模式：" << mode << std::endl;
         }
+        else
+        {
+            std::cout << "其他模式暂不支持" << std::endl;
+            return 1;
+        }
     }
     else if (cmd == "decode")
     {
         // TODO
+        std::cout << "暂未实现" << std::endl;
+        return 1;
     }
     else
     {
-        std::cout << "no" << std::endl;
+        printHelp();
+        return 1;
     }
 
 
@@ -152,7 +158,7 @@ void printHelp()
     << std::endl;
 }
 
-int robot36Encode(std::string in, std::string out, bool debug)
+int robot36Encode(const std::string& in, const std::string& out, bool debug)
 {
     xsstv::Image img;
     if (!xsstv::load_image(in, img))
@@ -160,7 +166,7 @@ int robot36Encode(std::string in, std::string out, bool debug)
         std::cerr << "读图失败：" << in << std::endl;
         return 1;
     }
-    std::cout << "读图成功：" << "长：" << img.width << "宽：" << img.height << std::endl;
+    std::cout << "读图成功：" << "宽：" << img.width << "高：" << img.height << std::endl;
     
     if (debug)
     {
@@ -212,7 +218,7 @@ std::string next_output_path(const std::string &prefix, const std::string &ext)
     int next = max_n + 1;
     char buf[64];
     // snprintf(容器， 大小， 格式， ···) 把格式化结果写进 buf
-    std::snprintf(buf, sizeof(buf), "%s%04%s", prefix.c_str(), next, ext.c_str());
+    std::snprintf(buf, sizeof(buf), "%s%04d%s", prefix.c_str(), next, ext.c_str());
 
 
     return (paths::output() / std::string(buf)).string();
