@@ -67,4 +67,23 @@ bool write_wav(const std::string& path, const AudioBuffer& audio)
     return true;
 }
 
+// 从文件里读 4 个字节，按小端顺序拼成一个 32 位整数
+static uint32_t read_u32(std::ifstream& f)
+{
+    uint8_t b[4];
+    // 不改变内存内容，只改变“看待这块内存的方式”
+    f.read(reinterpret_cast<char*>(b), 4);
+    // 把 4 个字节拼成 32 位整数 小端
+    return uint32_t(b[0]) | (uint32_t(b[1]) << 8) | (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24);
+}
+
+// 从文件里读 2 个字节，按小端顺序拼成一个 16 位整数
+static uint16_t read_u16(std::ifstream& f)
+{
+    uint8_t b[2];
+    f.read(reinterpret_cast<char*>(b), 2);
+    // 把 2 个字节拼成 16 位整数 小端
+    return uint16_t(b[0] | (b[1] << 8));
+}
+
 } // namespace xsstv
