@@ -7,7 +7,7 @@ static uint8_t clamp_to_byte(double v)
 {
     if (v < 0.0) return 0;
     if (v > 255.0) return 255;
-    return uint8_t(v + 0.5); // 四舍五入
+    return static_cast<uint8_t>(v + 0.5);
 }
 
 // RGB -> YCrCb（全范围 0~255，标准 BT.601 / JPEG 系数）
@@ -18,14 +18,14 @@ YCrCbImage rgb_to_ycrcb(const Image& img)
     out.width = img.width;
     out.height = img.height;
 
-    const int half_w = img.width / 2;
-    const int half_h = img.height / 2;
+    int half_w = img.width / 2;
+    int half_h = img.height / 2;
 
     out.y.resize(img.width * img.height);
     out.cr.resize(half_w * half_h);
     out.cb.resize(half_w * half_h);
 
-    // 亮度：每个像素一个值
+    // 亮度
     for (int y = 0; y < img.height; ++y)
     {
         for (int x = 0; x < img.width; ++x)
@@ -34,17 +34,20 @@ YCrCbImage rgb_to_ycrcb(const Image& img)
             const double R = img.rgb[idx + 0];
             const double G = img.rgb[idx + 1];
             const double B = img.rgb[idx + 2];
-
+            
             const double Y = 0.299 * R + 0.587 * G + 0.114 * B;
+
             out.y[y * img.width + x] = clamp_to_byte(Y);
         }
     }
 
-    // 色差：2x2 块求平均后再算，写到半分辨率平面
+    // 色差 4:2:0
+    // (i, j) 个 2*2 的像素块
     for (int j = 0; j < half_h; ++j)
     {
         for (int i = 0; i < half_w; ++i)
         {
+            // 求 2*2 像素的平均值
             double sr = 0.0, sg = 0.0, sb = 0.0;
             for (int dy = 0; dy < 2; ++dy)
             {
@@ -70,7 +73,6 @@ YCrCbImage rgb_to_ycrcb(const Image& img)
             out.cb[ci] = clamp_to_byte(Cb);
         }
     }
-
     return out;
 }
 
