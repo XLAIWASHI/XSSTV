@@ -9,5 +9,6 @@ namespace xsstv
 
 // 把音频写成 16bit / 单声道 PCM WAV
 bool write_wav(const std::string& path, const AudioBuffer& audio);
+bool read_wav(const std::string& path, AudioBuffer& out);
 
 } // namespace xsstv

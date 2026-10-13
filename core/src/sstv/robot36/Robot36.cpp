@@ -149,4 +149,33 @@ AudioBuffer Robot36::encode(const Image& img)
     return audio_;
 }
 
+// 返回基带
+// 原始信号只有一个投影，通过正交混频（乘 cos 和 -sin）得到 I/Q 两个坐标，
+// 才能算出相位，进而由相位的变化速度求出频率
+static void demodulate_baseband(const std::vector<float>& x, int sample_rate,
+                                double center_freq,
+                                std::vector<double>& I, std::vector<double>& Q)
+{
+    const size_t N = x.size();
+    I.assign(N, 0.0);
+    Q.assign(N, 0.0);
+
+    // 未低通的 i 和 q
+    std::vector<double> ir(N);
+    std::vector<double> qr(N);
+
+    // 混频
+    const double two_pi = 6.283185307179586;
+    // 计算本地振荡器（参考信号）每个采样点要推进多少相位
+    const double dphi = two_pi * center_freq / sample_rate;
+    double phase = 0.0;
+    for (size_t n = 0; n < N; ++n)
+    {
+        ir[n] = x[n] * std::cos(phase);
+        qr[n] = -x[n] * std::sin(phase);
+        phase += dphi;
+        if (phase >= two_pi) phase -= two_pi; // 超界复原
+    }
+}
+
 } // namespace xsstv

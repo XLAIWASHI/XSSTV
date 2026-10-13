@@ -184,6 +184,17 @@ int robot36Encode(const std::string& in, const std::string& out, bool debug)
         std::cerr << "写入wav错误：" << out << std::endl;
         return 1;
     }
+
+    // 验证readwav
+    xsstv::AudioBuffer rb;
+    if (xsstv::read_wav(out, rb))
+    {
+        std::cout << "返回：sample_rate=" << rb.sample_rate << "采样点=" << rb.mono.size() << std::endl;
+    }
+    else
+    {
+        std::cerr << "错误：read_wav 失败" << std::endl;
+    }
     return 0;
 }
 
