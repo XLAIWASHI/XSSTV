@@ -115,9 +115,33 @@ int main(int argc, char** argv)
     }
     else if (cmd == "decode")
     {
-        // TODO
-        std::cout << "暂未实现" << std::endl;
-        return 1;
+        if (input.empty())                        // 输入必填
+        {
+            std::cerr << "decode 需要指定输入 WAV\n";
+            return 1;
+        }
+
+        xsstv::AudioBuffer audio;
+        if (!xsstv::read_wav(in_path, audio))     // 用 in_path
+        {
+            std::cerr << "读 WAV 失败：" << in_path << "\n";
+            return 1;
+        }
+
+        xsstv::Robot36 dec(48000);
+        xsstv::Image img = dec.decode(audio);     // 接住结果
+
+        std::string dec_out = output.empty()
+            ? next_output_path("decoded_", ".png") // 输出默认 decoded_NNNN.png
+            : output;
+        if (!xsstv::save_image(dec_out, img))
+        {
+            std::cerr << "保存图片失败：" << dec_out << "\n";
+            return 1;
+        }
+        std::cout << "已解码 -> " << dec_out << "\n";
+        return 0;
+
     }
     else
     {
@@ -195,6 +219,7 @@ int robot36Encode(const std::string& in, const std::string& out, bool debug)
     {
         std::cerr << "错误：read_wav 失败" << std::endl;
     }
+    
     return 0;
 }
 

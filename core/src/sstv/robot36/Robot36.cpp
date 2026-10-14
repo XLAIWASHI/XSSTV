@@ -1,6 +1,6 @@
 #include "xsstv/Robot36.h"
 #include "Robot36Timing.h"
-
+#include <iostream>
 #include <cmath>
 
 namespace xsstv
@@ -8,6 +8,13 @@ namespace xsstv
 // 把 Robot36 的协议常量（FREQ_* / TIME_* / WIDTH ...）引进来，方便直接使用
 using namespace sstv::robot36;
 
+static void demodulate_baseband(const std::vector<float>& x, int sample_rate,
+                                double center_freq,
+                                std::vector<double>& I, std::vector<double>& Q);
+static std::vector<double> instantaneous_frequency( const std::vector<double>& I,
+                                                    const std::vector<double>& Q,
+                                                    int fs, double fc);
+static uint8_t freq_to_value(double f);
 namespace
 {
     constexpr double TWO_PI = 6.283185307179586;
@@ -146,7 +153,58 @@ AudioBuffer Robot36::encode(const Image& img)
     {
         encode_line(ycc, line);
     }
+
     return audio_;
+}
+
+Image Robot36::decode(const AudioBuffer &audio)
+{
+    // 拿频率
+    const int fs = audio.sample_rate; // 48000
+    const double ms = fs / 1000.0;    // 每毫秒多少采样点 = 48
+
+    std::vector<double> I, Q;
+    demodulate_baseband(audio.mono, fs, FREQ_CENTER, I, Q);
+    std::vector<double> freq = instantaneous_frequency(I, Q, fs, FREQ_CENTER);
+
+    const int vis_samples = int(910 * ms); // 跳过 VIS 头
+
+    // 准备 YCrCb
+    YCrCbImage ycc;
+    ycc.width = WIDTH;
+    ycc.height = HEIGHT;
+    ycc.y.resize(WIDTH * HEIGHT);
+    ycc.cr.resize((WIDTH / 2) * (HEIGHT / 2));
+    ycc.cb.resize((WIDTH / 2) * (HEIGHT / 2));
+
+    const int half_w = WIDTH / 2;
+    const double pix_step = PIXEL_TIME * ms;
+    const int y_off = int(12 * ms);
+    const int c_off = int(106 * ms);
+
+    // 逐行采样
+    for (int k = 0; k < HEIGHT; ++k)
+    {
+        const int line_start = vis_samples + k * int(TIME_LINE * ms);
+
+        // Y
+        for (int i = 0; i < WIDTH; ++i)
+        {
+            int idx = line_start + y_off + int((i + 0.5) * pix_step);
+            if (idx < 0 || idx >= int(freq.size())) continue;
+            ycc.y[k * WIDTH + i] = freq_to_value(freq[idx]);
+        }
+
+        // 色差
+        std::vector<uint8_t>& plane = (k % 2 == 0) ? ycc.cr : ycc.cb;
+        for (int j = 0; j < half_w; ++j)
+        {
+            int idx = line_start + c_off + int((j + 0.5) * pix_step);
+            if (idx < 0 || idx >= int(freq.size())) continue;
+            plane[(k / 2) * half_w + j] = freq_to_value(freq[idx]);
+        }
+    }
+    return ycrcb_to_rgb(ycc);
 }
 
 // 返回基带
@@ -168,14 +226,63 @@ static void demodulate_baseband(const std::vector<float>& x, int sample_rate,
     const double two_pi = 6.283185307179586;
     // 计算本地振荡器（参考信号）每个采样点要推进多少相位
     const double dphi = two_pi * center_freq / sample_rate;
-    double phase = 0.0;
+    double ref_phase = 0.0;
     for (size_t n = 0; n < N; ++n)
     {
-        ir[n] = x[n] * std::cos(phase);
-        qr[n] = -x[n] * std::sin(phase);
-        phase += dphi;
-        if (phase >= two_pi) phase -= two_pi; // 超界复原
+        ir[n] = x[n] * std::cos(ref_phase);
+        qr[n] = -x[n] * std::sin(ref_phase);
+        ref_phase += dphi;
+        if (ref_phase >= two_pi) ref_phase -= two_pi; // 超界复原
     }
+
+    // 低通 + 滑动平均
+    const int L = 48; // 窗口
+    double sum_i = 0.0, sum_q = 0.0;
+    for (size_t n = 0; n < N; ++n)
+    {
+        sum_i += ir[n];
+        sum_q += qr[n];
+        if (n >= (size_t)L)
+        {
+            sum_i -= ir[n - L];
+            sum_q -= qr[n - L];
+        }
+        const int cnt = (n < (size_t)L) ? int(n) + 1 : L;
+        I[n] = sum_i / cnt;
+        Q[n] = sum_q / cnt;
+    }
+
+}
+
+// 相位 + 解缠绕 + 差分
+// fs 采样率 fc 中心频率
+static std::vector<double> instantaneous_frequency( const std::vector<double>& I,
+                                                    const std::vector<double>& Q,
+                                                    int fs, double fc)
+{
+    const size_t N = I.size();
+    const double PI = 3.141592653589793;
+    std::vector<double> freq(N, fc);
+
+    double prev = std::atan2(Q[0], I[0]); // 上一个采样点的原始相位
+    for (size_t n = 1; n < N; ++n)
+    {
+        double raw = std::atan2(Q[n], I[n]); // 取第 n 个采样点的相位
+        double d = raw - prev;
+        if (d > PI) d -= 2 * PI;
+        if (d < -PI) d += 2 * PI;
+        prev = raw;
+        freq[n] = fc + d * fs / (2.0 * PI);
+    }
+    return freq;
+}
+
+static uint8_t freq_to_value(double f)
+{
+    double v = (f - FREQ_MIN) / (FREQ_MAX - FREQ_MIN) * 255.0; // (f - 1500) / 800 * 255
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return uint8_t(v + 0.5);
 }
 
 } // namespace xsstv

@@ -11,6 +11,7 @@ class Robot36
 public:
     explicit Robot36(int sample_rate = 48000);
     AudioBuffer encode(const Image& image);
+    Image decode(const AudioBuffer& audio);
 private:
     void encode_vis();
     void encode_line(const YCrCbImage& ycc, int line);
