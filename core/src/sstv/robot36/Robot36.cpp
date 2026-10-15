@@ -1,6 +1,6 @@
 #include "xsstv/Robot36.h"
 #include "Robot36Timing.h"
-
+#include <iostream>
 #include <cmath>
 
 namespace xsstv
@@ -8,6 +8,18 @@ namespace xsstv
 // 把 Robot36 的协议常量（FREQ_* / TIME_* / WIDTH ...）引进来，方便直接使用
 using namespace sstv::robot36;
 
+static void demodulate_baseband(const std::vector<float>& x, int sample_rate,
+                                double center_freq,
+                                std::vector<double>& I, std::vector<double>& Q);
+static std::vector<double> instantaneous_frequency( const std::vector<double>& I,
+                                                    const std::vector<double>& Q,
+                                                    int fs, double fc);
+static uint8_t freq_to_value(double f);
+static std::vector<int> find_line_syncs(const std::vector<double>& freq, int fs);
+static std::vector<double> moving_average(const std::vector<double>& x, int L);
+static double avg_freq(const std::vector<double>& freq, int a, int b);
+static std::vector<uint8_t> blur3x3(const std::vector<uint8_t>& in, int w, int h);
+static void fix_edges(std::vector<uint8_t>& p, int w, int h, int n);
 namespace
 {
     constexpr double TWO_PI = 6.283185307179586;
@@ -146,7 +158,288 @@ AudioBuffer Robot36::encode(const Image& img)
     {
         encode_line(ycc, line);
     }
+
     return audio_;
+}
+
+Image Robot36::decode(const AudioBuffer &audio)
+{
+    // 拿频率
+    const int fs = audio.sample_rate; // 48000
+    const double ms = fs / 1000.0;    // 每毫秒多少采样点 = 48
+
+    std::vector<double> I, Q;
+    demodulate_baseband(audio.mono, fs, FREQ_CENTER, I, Q);
+    std::vector<double> freq = instantaneous_frequency(I, Q, fs, FREQ_CENTER);
+
+    // 先检测每一行的同步脉冲位置，用它来定位每一行
+    // 这样即使开头有杂音、不从 VIS 开头、图像在录音中间、录音不完整，也能解码
+    const std::vector<int> syncs = find_line_syncs(freq, fs);
+    const bool use_syncs = (int(syncs.size()) >= HEIGHT);
+
+    // 兜底方案：检测不到足够同步时，退回"假设从 VIS 头开始 + 固定时序"（自己编码器的时序是已知的）
+    const int vis_samples = int(910 * ms); // 跳过 VIS 头
+    const int delay = 47;                  // 两级滑动平均的群延迟：2*(L-1)/2
+
+    // 准备 YCrCb
+    YCrCbImage ycc;
+    ycc.width = WIDTH;
+    ycc.height = HEIGHT;
+    ycc.y.resize(WIDTH * HEIGHT);
+    ycc.cr.resize((WIDTH / 2) * (HEIGHT / 2));
+    ycc.cb.resize((WIDTH / 2) * (HEIGHT / 2));
+
+    const int half_w = WIDTH / 2;
+    const double pix_step = PIXEL_TIME * ms;
+    const int y_off = int(12 * ms);
+    const int c_off = int(106 * ms);
+
+    // 逐行采样
+    for (int k = 0; k < HEIGHT; ++k)
+    {
+        // 用同步定位时，群延迟已经包含在检测到的位置里，不需要再补
+        // 退回固定时序时，才需要额外补偿群延迟
+        int line_start;
+        int extra;
+        if (use_syncs)
+        {
+            line_start = syncs[k];
+            extra = 0;
+        }
+        else
+        {
+            line_start = vis_samples + k * int(TIME_LINE * ms);
+            extra = delay;
+        }
+
+        // Y
+        for (int i = 0; i < WIDTH; ++i)
+        {
+            int a = line_start + y_off + int(i * pix_step) + extra;
+            int b = line_start + y_off + int((i + 1) * pix_step) + extra;
+            ycc.y[k * WIDTH + i] = freq_to_value(avg_freq(freq, a, b));
+        }
+
+        // 色差
+        std::vector<uint8_t>& plane = (k % 2 == 0) ? ycc.cr : ycc.cb;
+        for (int j = 0; j < half_w; ++j)
+        {
+            int a = line_start + c_off + int(j * pix_step) + extra;
+            int b = line_start + c_off + int((j + 1) * pix_step) + extra;
+            plane[(k / 2) * half_w + j] = freq_to_value(avg_freq(freq, a, b));
+        }
+    }
+    // 出图前先修掉扫描段首尾被污染的边缘色差，再做轻微平滑
+    fix_edges(ycc.cr, half_w, HEIGHT / 2, 2);
+    fix_edges(ycc.cb, half_w, HEIGHT / 2, 2);
+    ycc.cr = blur3x3(ycc.cr, half_w, HEIGHT / 2);
+    ycc.cb = blur3x3(ycc.cb, half_w, HEIGHT / 2);
+    return ycrcb_to_rgb(ycc);
+}
+
+// 返回基带
+// 原始信号只有一个投影，通过正交混频（乘 cos 和 -sin）得到 I/Q 两个坐标，
+// 才能算出相位，进而由相位的变化速度求出频率
+static void demodulate_baseband(const std::vector<float>& x, int sample_rate,
+                                double center_freq,
+                                std::vector<double>& I, std::vector<double>& Q)
+{
+    const size_t N = x.size();
+    I.assign(N, 0.0);
+    Q.assign(N, 0.0);
+
+    // 未低通的 i 和 q
+    std::vector<double> ir(N);
+    std::vector<double> qr(N);
+
+    // 混频
+    const double two_pi = 6.283185307179586;
+    // 计算本地振荡器（参考信号）每个采样点要推进多少相位
+    const double dphi = two_pi * center_freq / sample_rate;
+    double ref_phase = 0.0;
+    for (size_t n = 0; n < N; ++n)
+    {
+        ir[n] = x[n] * std::cos(ref_phase);
+        qr[n] = -x[n] * std::sin(ref_phase);
+        ref_phase += dphi;
+        if (ref_phase >= two_pi) ref_phase -= two_pi; // 超界复原
+    }
+
+    // 低通 + 滑动平均
+    // 两级滑动平均
+    const int L = 48;
+    I = moving_average(ir, L);
+    Q = moving_average(qr, L);
+    I = moving_average(I, L);
+    Q = moving_average(Q, L);
+}
+
+// 相位 + 解缠绕 + 差分
+// fs 采样率 fc 中心频率
+static std::vector<double> instantaneous_frequency( const std::vector<double>& I,
+                                                    const std::vector<double>& Q,
+                                                    int fs, double fc)
+{
+    const size_t N = I.size();
+    const double PI = 3.141592653589793;
+    std::vector<double> freq(N, fc);
+
+    double prev = std::atan2(Q[0], I[0]); // 上一个采样点的原始相位
+    for (size_t n = 1; n < N; ++n)
+    {
+        double raw = std::atan2(Q[n], I[n]); // 取第 n 个采样点的相位
+        double d = raw - prev;
+        if (d > PI) d -= 2 * PI;
+        if (d < -PI) d += 2 * PI;
+        prev = raw;
+        freq[n] = fc + d * fs / (2.0 * PI);
+    }
+    return freq;
+}
+
+static uint8_t freq_to_value(double f)
+{
+    double v = (f - FREQ_MIN) / (FREQ_MAX - FREQ_MIN) * 255.0; // (f - 1500) / 800 * 255
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return uint8_t(v + 0.5);
+}
+
+// 在逐采样频率里找出每一行的同步脉冲位置
+// Robot36 每行开头有一段约 9ms 的 1200Hz 同步脉冲，且行与行间隔固定为 150ms(7200 采样)
+// 有了这些位置，就不必假设音频从 VIS 头开始，也能容忍开头杂音 / 图像在中间 / 录音不完整
+// freq : 逐采样频率；fs : 采样率
+// 返回 : 每一行同步脉冲的起始采样下标（按时间先后）
+static std::vector<int> find_line_syncs(const std::vector<double>& freq, int fs)
+{
+    const double tol = 60.0;                            // 判定 1200Hz 的频率容差（要窄于 VIS 数据位的 1100/1300）
+    const int min_run = int(5.0 * fs / 1000.0);        // 脉冲最短 5ms 才算数
+    const int line_len = int(TIME_LINE * fs / 1000.0); // 一行 150ms = 7200 采样
+    const int spacing_tol = line_len / 50;             // 行距允许约 2% 误差
+
+    // 第一步：找出所有 1200Hz 脉冲的起点（VIS 里的 1200Hz 段也会被算进来）
+    std::vector<int> runs;
+    size_t n = 0;
+    while (n < freq.size())
+    {
+        if (std::fabs(freq[n] - FREQ_SYNC) < tol)
+        {
+            size_t end = n;
+            while (end < freq.size() && std::fabs(freq[end] - FREQ_SYNC) < tol)
+                ++end;
+            if (int(end - n) >= min_run)
+                runs.push_back(int(n));
+            n = end;
+        }
+        else
+        {
+            ++n;
+        }
+    }
+
+    // 第二步：从所有脉冲里挑出"间隔约等于一行(7200)"的最长序列，那就是真正的行同步
+    int best_start = 0;
+    int best_len = 0;
+    for (size_t i = 0; i < runs.size(); ++i)
+    {
+        size_t j = i;
+        while (j + 1 < runs.size())
+        {
+            const int diff = runs[j + 1] - runs[j];
+            if (diff < line_len - spacing_tol || diff > line_len + spacing_tol)
+                break;
+            ++j;
+        }
+        const int len = int(j - i) + 1;
+        if (len > best_len)
+        {
+            best_len = len;
+            best_start = int(i);
+        }
+    }
+
+    // 第三步：向前补齐 + 返回
+    // VIS 的 stop bit(1200Hz) 会和第一行的同步脉冲连成一整段，导致第一行没被当成独立脉冲；
+    // 用同样的行距往前推，把前面缺的行补回来
+    std::vector<int> syncs;
+    if (runs.empty())
+        return syncs;
+
+    int first = runs[best_start];
+    while (first - line_len >= 0 && std::fabs(freq[first - line_len] - FREQ_SYNC) < tol)
+        first -= line_len;
+
+    for (int p = first; p < runs[best_start]; p += line_len)
+        syncs.push_back(p);
+    for (int k = 0; k < best_len; ++k)
+        syncs.push_back(runs[best_start + k]);
+    return syncs;
+}
+
+static std::vector<double> moving_average(const std::vector<double>& x, int L)
+{
+    std::vector<double> y(x.size());
+    double sum = 0.0;
+    for (size_t n = 0; n < x.size(); ++n)
+    {
+        sum += x[n];
+        if (n >= (size_t)L) sum -= x[n - L];
+        const int cnt = (n < (size_t)L) ? int(n) + 1 : L;
+        y[n] = sum / cnt;
+    }
+    return y;
+}
+
+static double avg_freq(const std::vector<double>& freq, int a, int b)
+{
+    if (a < 0) a = 0;
+    if (b > (int)freq.size()) b = (int)freq.size();
+    if (b <= a) return FREQ_MIN;
+    double s = 0.0;
+    for (int t = a; t < b; ++t) s += freq[t];
+    return s / (b - a);
+}
+
+// 把平面最外的 n 列/行，用相邻内侧的值覆盖
+// 用来去掉扫描段首尾被 sync/porch 污染造成的彩色边缘
+static void fix_edges(std::vector<uint8_t>& p, int w, int h, int n)
+{
+    for (int y = 0; y < h; ++y)          // 左右
+        for (int k = 0; k < n; ++k)
+        {
+            p[y * w + k] = p[y * w + n];            // 左边
+            p[y * w + (w - 1 - k)] = p[y * w + (w - 1 - n)]; // 右边
+        }
+    for (int x = 0; x < w; ++x)          // 上下
+        for (int k = 0; k < n; ++k)
+        {
+            p[k * w + x] = p[n * w + x];            // 上边
+            p[(h - 1 - k) * w + x] = p[(h - 1 - n) * w + x]; // 下边
+        }
+}
+
+static std::vector<uint8_t> blur3x3(const std::vector<uint8_t>& in, int w, int h)
+{
+    std::vector<uint8_t> out(in.size());
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            int s = 0, c = 0;
+            for (int dy = -1; dy <= 1; ++dy)
+            {
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    int yy = y + dy, xx = x + dx;
+                    if (yy < 0 || yy >= h || xx < 0 || xx >= w) continue;
+                    s += in[yy * w + xx];
+                    ++c;
+                }
+            }
+            out[y * w + x] = uint8_t(s / c);
+        }
+    }
+    return out;
 }
 
 } // namespace xsstv
