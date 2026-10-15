@@ -88,36 +88,79 @@ static uint16_t read_u16(std::ifstream& f)
     return uint16_t(b[0] | (b[1] << 8));
 }
 
-// 相位法（正交解调）
-// 因为像素时间太短，无法用数周期的方法测频率，
-// 所以我们改用相位法，在每个采样点上算出瞬时频率，再平均。
-// 这样能极大逼近真实值，但受限于编码时的有损压缩和传输噪声，100% 还原是不可能的，也不需要
+// 读取一个 4 字节的 RIFF 子块标签（如 "fmt "、"data"、"LIST"）
+static void read_tag(std::ifstream& f, char tag[5])
+{
+    f.read(tag, 4);
+    tag[4] = '\0';
+}
+
+// 从 WAV 文件里读出音频，统一降为 48k 单声道
+// 不同工具导出的 wav 结构不一样（可能带 LIST 等额外块，也可能是立体声），
+// 所以这里按 RIFF 规则遍历子块来找 fmt / data，并在读取时把多声道平均成单声道
 bool read_wav(const std::string& path, AudioBuffer& out)
 {
     std::ifstream f(path, std::ios::binary);
     if (!f) return false;
-    // ignore(n) 跳过 n 个字节
-    f.ignore(4);                   // "RIFF"
-    read_u32(f);                   // riff_size 丢弃
-    f.ignore(4);                   // "WAVE"
-    f.ignore(4);                   // "fmt"
-    read_u32(f);                   // fmt_size
-    read_u16(f);                   // 编码 丢弃
-    read_u16(f);                   // 声道 丢弃
-    out.sample_rate = read_u32(f); // 采样率
-    read_u32(f);                   // 字节率 丢弃
-    read_u16(f);                   // 块对齐 丢弃
-    read_u16(f);                   // 位深 丢弃
-    f.ignore(4);                   // "data"
 
-    // 将 pcm 由 uint16_t -> float
-    const uint32_t data_size = read_u32(f); // 数据字节数
-    const int n = int(data_size / 2);       // uint16_t 是 2 个字节， / 2 算出采样点总个数
-    out.mono.resize(n);
-    for (int i = 0; i < n; ++i)
+    // RIFF 头
+    char tag[5];
+    read_tag(f, tag);   // "RIFF"
+    read_u32(f);        // riff_size 丢弃
+    read_tag(f, tag);   // "WAVE"
+
+    // 遍历各子块，找到 fmt 和 data（位置不固定，中间可能有 LIST 等块）
+    uint16_t channels = 1;          // 声道数，默认按单声道
+    uint16_t bits = 16;             // 位深，默认 16
+    uint32_t sample_rate = 48000;   // 采样率，默认 48k
+    uint32_t data_size = 0;         // 音频数据字节数
+
+    while (f)
     {
-        int16_t v = int16_t(read_u16(f));
-        out.mono[i] = v / 32767.0f;
+        read_tag(f, tag);
+        const uint32_t size = read_u32(f); // 本块大小
+
+        if (std::string(tag) == "fmt ")
+        {
+            read_u16(f);                // 编码（1=PCM）丢弃
+            channels = read_u16(f);     // 声道数
+            sample_rate = read_u32(f);  // 采样率
+            read_u32(f);                // 字节率 丢弃
+            read_u16(f);                // 块对齐 丢弃
+            bits = read_u16(f);         // 位深
+            const int consumed = 16;    // 上面读了 16 字节
+            if (int(size) > consumed)
+                f.ignore(size - consumed); // fmt 块多出来的字节跳过
+        }
+        else if (std::string(tag) == "data")
+        {
+            data_size = size;           // 找到音频数据
+            break;
+        }
+        else
+        {
+            // 其它块（LIST 等）整块跳过；RIFF 规定奇数大小要补 1 字节对齐
+            f.ignore(size + (size & 1));
+        }
+    }
+
+    if (channels < 1) channels = 1;
+    if (bits == 0) bits = 16;
+
+    // 读音频数据：每帧有 channels 个采样，读取时求平均降为单声道
+    const int bytes_per_sample = bits / 8;
+    const int frame_count = int(data_size / (channels * bytes_per_sample));
+    out.sample_rate = int(sample_rate);
+    out.mono.resize(frame_count);
+    for (int i = 0; i < frame_count; ++i)
+    {
+        int sum = 0;
+        for (int ch = 0; ch < channels; ++ch)
+        {
+            // 按 16bit 有符号读，避免多个通道相加时带出直流偏置
+            sum += int16_t(read_u16(f));
+        }
+        out.mono[i] = sum / (channels * 32767.0f); // 平均 → 单声道 float
     }
     return true;
 }

@@ -88,14 +88,17 @@ int main(int argc, char** argv)
     }
 
     std::string out_path;
-    if (output.empty())
+    if (cmd == "encode")
     {
-        out_path = next_output_path(mode + "_", ".wav");
-        std::cout << "提示：未指定输出，使用默认输出 " << out_path << std::endl;
-    }
-    else
-    {
-        out_path = output;
+        if (output.empty())
+        {
+            out_path = next_output_path(mode + "_", ".wav");
+            std::cout << "提示：未指定输出，使用默认输出 " << out_path << std::endl;
+        }
+        else
+        {
+            out_path = output;
+        }
     }
 
     // 命令实现
