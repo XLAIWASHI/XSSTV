@@ -101,3 +101,22 @@ output/
 *.png
 *.jpg
 *.jpeg
+
+# ==============================
+# Qt runtime deployed at project root (windeployqt)
+# ==============================
+
+/platforms/
+/imageformats/
+/iconengines/
+/styles/
+/translations/
+/networkinformation/
+*.qm
+
+# ==============================
+# 分发打包
+# ==============================
+
+dist/
+*.zip
