@@ -3,8 +3,25 @@
 #include <cstdint>
 #include <vector>
 
+#ifdef _WIN32
+#  define WIN32_LEAN_AND_MEAN
+#  include <windows.h>
+#endif
+
 namespace xsstv
 {
+
+#ifdef _WIN32
+// UTF-8 路径 → 宽字符。Windows 用宽字符文件 API 才能打开中文路径
+static std::wstring toWide(const std::string& utf8)
+{
+    if (utf8.empty()) return std::wstring();
+    const int n = MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), int(utf8.size()), nullptr, 0);
+    std::wstring w(size_t(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, utf8.c_str(), int(utf8.size()), &w[0], n);
+    return w;
+}
+#endif
 
 // 把一个32位整数，拆成4个字节，按“小端顺序”写入文件
 static void write_u32(std::ofstream& f, uint32_t v)
@@ -24,7 +41,12 @@ static void write_u16(std::ofstream& f, uint16_t v)
 
 bool write_wav(const std::string& path, const AudioBuffer& audio)
 {
+#ifdef _WIN32
+    const std::wstring wpath = toWide(path);
+    std::ofstream f(wpath.c_str(), std::ios::binary); // 二进制模式
+#else
     std::ofstream f(path, std::ios::binary); // 二进制模式
+#endif
     if (!f) return false;
 
     // WAV 文件标准（PCM16）规定，音频数据必须用 16 位整数存储，而不是浮点数
@@ -100,7 +122,12 @@ static void read_tag(std::ifstream& f, char tag[5])
 // 所以这里按 RIFF 规则遍历子块来找 fmt / data，并在读取时把多声道平均成单声道
 bool read_wav(const std::string& path, AudioBuffer& out)
 {
+#ifdef _WIN32
+    const std::wstring wpath = toWide(path);
+    std::ifstream f(wpath.c_str(), std::ios::binary);
+#else
     std::ifstream f(path, std::ios::binary);
+#endif
     if (!f) return false;
 
     // RIFF 头
@@ -115,6 +142,7 @@ bool read_wav(const std::string& path, AudioBuffer& out)
     uint32_t sample_rate = 48000;   // 采样率，默认 48k
     uint32_t data_size = 0;         // 音频数据字节数
 
+    // 循环遍历子块
     while (f)
     {
         read_tag(f, tag);

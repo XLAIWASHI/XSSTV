@@ -1,8 +1,11 @@
 #include "xsstv/Image.h"
 
+// Windows 下支持 UTF-8（中文）文件名
+#define STBI_WINDOWS_UTF8
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
+#define STBIW_WINDOWS_UTF8
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
