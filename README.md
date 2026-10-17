@@ -1,144 +1,86 @@
 # XSSTV
 
-用 C++17 实现的 **Robot 36 模式 SSTV（慢扫描电视）编解码程序**。
+一个使用 C++ 实现的 Robot36 模式 SSTV（慢扫描电视）编解码软件。包含纯 C++ 编写的核心算法库、CLI 工具以及现代化的 Qt 桌面界面。
 
-把一张图片编码成 SSTV 音频（WAV），或把 SSTV 音频解码回图片。Core 为纯 C++，不依赖 Qt；提供命令行工具和 Qt 桌面界面两种外壳。
+## 项目展示
 
-```
-图片 ──Robot36 编码──▶ SSTV 音频(WAV)
-SSTV 音频(WAV) ──Robot36 解码──▶ 图片
-```
+**编码**
+<p align="center">
+  <img src="docs/images/XSSTV_encode.gif" alt="编码展示" width="800">
+</p>
 
----
+**解码** 
+<p align="center">
+  <img src="docs/images/XSSTV_decode.gif" alt="解码展示" width="800">
+</p>
 
-## 功能
+## 功能特性
 
-- **Robot 36 编码**：图片 → 音频
-- **Robot 36 解码**：音频 → 图片
-- **图片读写**：PNG / JPG / JPEG / BMP（经 stb）
-- **WAV 读写**：16bit PCM；读取时自动多声道降单声道、跳过额外 RIFF 块
-- **音频播放**：播放 / 暂停 / 停止
-- **桌面 GUI**：编码页、解码页、资源管理（Qt 6 Widgets）
-- **其它**：拖拽加载、默认路径记忆、输出自动编号、支持中文路径
+### 核心编解码（Core）
+- **Robot36 编码**：将任意尺寸图片等比例缩放、居中黑边填充后，调制成标准 SSTV 音频（PCM16 WAV）
+- **Robot36 解码**：从音频中提取瞬时频率，还原为 320×240 图像
 
----
+### 信号处理与算法
+- **正交解调（I/Q）**：使用正交混频与低通滤波提取基带信号，计算相位差求频率
+- **相位解缠绕**：解决 `atan2` 在 ±π 处的跳变，保证音频连续性与解码精度
+- **BT.601 色彩空间**：支持 RGB 与 YCrCb 相互转换，并实现 4:2:0 降采样以节省带宽
+- **平滑与去噪**：包含滑动平均低通、边缘修复与 3x3 模糊，提升解码画质
 
-## 目录结构
+### 命令行工具（CLI）
+- 提供 `encode` 和 `decode` 子命令，适合脚本调用与自动化测试
+- 支持自定义输入输出路径，未指定时自动回退到默认目录
+- `--debug` 模式可将中间处理图片（如缩放后的预览图）落盘，方便排查
 
-```
-XSSTV/
-├── core/                 纯 C++ 核心（不依赖 Qt）
-│   ├── include/xsstv/    公开接口
-│   └── src/
-│       ├── image/        图片读写 / 缩放 / 颜色转换
-│       ├── audio/        WAV 读写 / 正弦波
-│       └── sstv/robot36/ Robot36 编解码
-├── cli/                  命令行工具
-├── desktop/              Qt 桌面程序
-├── third_party/stb/      单头文件图像库
-├── docs/                 文档
-└── assets/               素材（输入图片）
-```
+### 桌面图形界面（Qt 6）
+- 支持图片和 WAV 文件拖拽加载、路径记忆
+- 内置音频播放器，支持播放 / 暂停 / 停止
+- 提供独立的资源管理面板，支持查看、搜索、重命名与清理
 
-依赖方向：`cli / desktop ──▶ core`，**core 不反向依赖**。
+### 其他
+- 支持 WAV 文件格式自动解析，兼容跳过额外的 RIFF 块并自动将多声道降为单声道
 
----
+## 技术栈
 
-## 环境要求
+**语言**
+- `C++17`
 
-- **C++17**，CMake ≥ 3.16
-- **编译器**：MSVC（推荐 VS 2022 / 2019 的 MSVC 工具链）
-- **Qt 6**（仅桌面端需要）：Widgets、Multimedia、Concurrent
-- 目标平台：Windows（桌面）
+**构建系统**
+- `CMake`
+- `Ninja`
 
----
+**图像与信号处理**
+- `stb_image` / `stb_image_write` / `stb_image_resize`
+- 纯手写 DSP 算法（正交解调、相位解缠绕）
 
-## 构建
+**桌面 GUI**
+- `Qt 6 Widgets`
+- `Qt Multimedia`
+- `Qt Concurrent`
 
-### 1. Core + CLI（不需要 Qt）
+## 运行方式
+
+- 使用 **MSVC** 编译
+- 配置 **Qt 6** 环境（仅桌面端需要；Core / CLI 不需要）
+- 编译运行项目
 
 ```bat
+:: Core + CLI（不需要 Qt）
 cmake -S . -B build -G Ninja
 cmake --build build
-```
-产物：`build/core/xsstv_core.lib`、`build/cli/xsstv.exe`
 
-### 2. 桌面端（需要 Qt）
-
-```bat
+:: 桌面端（需要 Qt）
 cmake -S . -B build-desktop -G Ninja ^
       -DXSSTV_BUILD_DESKTOP=ON ^
       -DCMAKE_PREFIX_PATH=<Qt的msvc2022_64目录> ^
       -DCMAKE_BUILD_TYPE=Release
 cmake --build build-desktop
 ```
-> 用 CMake 时需在 **VS 开发者命令行**里（`cl.exe`/`ninja` 可用），并加载 vcvars 环境。
-> `<Qt的msvc2022_64目录>` 例如 `D:/Qt/6.11.2/msvc2022_64`。
+也可直接到 [Releases](https://github.com/XLAIWASHI/XSSTV/releases) 下载编译好的可执行文件。
 
-产物：`build-desktop/desktop/xsstv_desktop.exe`
+## 操作说明
 
----
-
-## 使用
-
-### 命令行
-
-```
-xsstv encode [--debug] [输入图片] [输出WAV]
-xsstv decode [--debug] [输入WAV] [输出PNG]
-```
-- 输入省略时默认 `assets/test.png`；找不到会在 `assets/` 里找
-- 输出省略时自动编号：`output/robot36_NNNN.wav` / `output/decoded_NNNN.png`
-- `--debug` 输出中间图到 `temp/`
-
-### 桌面端
-
-双击 `xsstv_desktop.exe`，或直接把图片 / WAV **拖进窗口**。
-
-- **编码页**：选图片 →（左侧原图 / 右侧 320×240 编码输入图）→ 开始编码 → 播放 / 保存 WAV
-- **解码页**：选 WAV → 查看音频信息 → 开始解码 → 保存图片
-- **资源管理**：查看、筛选、搜索、打开目录、另存为、重命名、删除、预览/播放
-
----
-
-## 打包分发（桌面端）
-
-```powershell
-# 1. 复制 exe 到干净目录
-New-Item -ItemType Directory dist
-Copy-Item build-desktop\desktop\xsstv_desktop.exe dist\
-
-# 2. 收集 Qt 依赖（DLL + 插件），在 VS 开发者环境里执行
-windeployqt --release dist\xsstv_desktop.exe
-
-# 3. 补 MSVC 运行库（从 VS 的 Redist 目录）
-Copy-Item "<VS>\VC\Redist\MSVC\<ver>\x64\Microsoft.VC14x.CRT\*.dll" dist\
-
-# 4. 放默认样例图
-New-Item -ItemType Directory dist\assets
-Copy-Item assets\test.png dist\assets\
-
-# 5. 压缩
-Compress-Archive -Path dist\* -DestinationPath xsstv_desktop.zip -Force
-```
-
-分发给他人：发 `xsstv_desktop.zip`，对方解压后双击 `xsstv_desktop.exe` 即可（已含 Qt 与运行库）。
-
----
-
-## 文档
-
-- `docs/Core_Summary.md` —— Core 结构、公开 API、数据流
-- `docs/Encoder_Summary.md` —— 编码器实现细节
-- `docs/Decoder_Summary.md` —— 解码器实现细节
-- `plan.md` / `qt_plan.md` —— 开发计划
-
----
-
-## 已知限制
-
-- **只支持 Robot 36**（PD120、Martin、Scottie 等尚未实现）
-- **不做实时麦克风解码**（当前为文件级编解码）
-- 真实无线电录音（噪声 / 多普勒频移 / 时钟差）**未做鲁棒处理**，无斜切校正
-- WAV 仅处理 **16bit PCM**；不支持 8/24/32bit、浮点或压缩格式（如 m4a）
-- 桌面端仅支持 64 位 Windows（受 Qt 6 msvc2022 限制）
+1. **编码**：选择图片 → 开始编码 → 播放 / 保存 WAV
+2. **解码**：选择 WAV → 开始解码 → 保存图片
+3. **拖拽**：拖入图片自动进编码页；拖入 WAV 自动进解码页
+4. **播放**：播放 / 暂停 / 停止
+5. **资源管理**：查看、筛选、搜索、打开目录、另存为、重命名、删除
